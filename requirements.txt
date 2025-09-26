@@ -1,2 +1,3 @@
 streamlit
-requests
+playwright
+bs4
