@@ -1,52 +1,47 @@
-import streamlit as st
+import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+import json
+
+BASE_URL = "https://www.walmart.com.mx"
 
 def obtener_rebajas_desde_url(url):
-    rebajas = []
+    productos = []
+    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url)
-        page.wait_for_timeout(5000)  # esperar a que carguen los productos
+    # Walmart usa JSON dentro de script con id="__NEXT_DATA__"
+    script_tag = soup.find("script", id="__NEXT_DATA__")
+    if not script_tag:
+        return productos
 
-        html = page.content()
-        soup = BeautifulSoup(html, "html.parser")
+    data = json.loads(script_tag.string)
 
-        # Walmart MX suele usar etiquetas de rebaja en spans con texto "Rebaja"
-        productos = soup.find_all("div", class_="pa0")  # contenedor genérico de productos (se puede ajustar)
+    # Acceso al árbol JSON donde están los productos
+    try:
+        items = data["props"]["pageProps"]["initialData"]["searchResult"]["itemStacks"][0]["items"]
+    except KeyError:
+        return productos
 
-        for p in productos:
-            nombre = p.find("span", {"class": "w_iUH7"})
-            precio = p.find("span", {"class": "w_Q2R8"})
-            rebaja = p.find(string="Rebaja")
+    for item in items:
+        titulo = item.get("displayName", "Sin título")
+        precio = item.get("priceInfo", {}).get("linePrice", {}).get("price", "N/A")
+        url_producto = BASE_URL + item.get("canonicalUrl", "#")
+        promocion = item.get("badges", [])
 
-            if nombre and precio and rebaja:
-                rebajas.append({
-                    "nombre": nombre.get_text(strip=True),
-                    "precio": precio.get_text(strip=True)
-                })
+        # Filtramos SOLO si está marcado como rebaja
+        if any("Rebaja" in badge.get("text", "") for badge in promocion):
+            productos.append({
+                "titulo": titulo,
+                "precio": precio,
+                "url": url_producto
+            })
 
-        browser.close()
-
-    return rebajas
+    return productos
 
 
-# --- Interfaz Streamlit ---
-st.set_page_config(page_title="Rebajas Walmart MX", page_icon="🛒", layout="wide")
-st.title("🛒 Rebajas Walmart MX (scraping con Playwright)")
-
-url = st.text_input("📂 Pega la URL de una categoría de Walmart México:")
-
-if url:
-    st.info("🔎 Buscando productos en rebaja...")
-    productos = obtener_rebajas_desde_url(url)
-
-    if productos:
-        st.success(f"✅ Encontrados {len(productos)} productos en rebaja")
-        for p in productos:
-            st.write(f"**{p['nombre']}** - 💲{p['precio']}")
-            st.markdown("---")
-    else:
-        st.warning("⚠️ No se encontraron rebajas en esta categoría.")
+# Ejemplo de uso
+if __name__ == "__main__":
+    url = "https://www.walmart.com.mx/content/electrodomesticos/265659"
+    rebajas = obtener_rebajas_desde_url(url)
+    for r in rebajas:
+        print(r)
